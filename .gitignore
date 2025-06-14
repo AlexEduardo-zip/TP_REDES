@@ -1,0 +1,5 @@
+common.o
+sensor.o
+server.o
+server
+sensor
