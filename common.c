@@ -201,49 +201,6 @@ void construir_mensagem(char *buffer_destino, size_t tamanho_buffer, int codigo,
     }
 }
 
-void tratar_comunicacao_p2p(int socket_p2p_atual, int *socket_p2p_ptr,
-                            int *handshake_completo_ptr, fd_set *conjunto_principal_ptr,
-                            SensorInfo *sensores, int *contador_sensores_ptr,
-                            PendingRequest *pedidos_pendentes)
-{
-    char buffer_p2p[MAX_MSG_SIZE];
-    memset(buffer_p2p, 0, MAX_MSG_SIZE);
-    ssize_t bytes_recebidos;
-
-    // Recebe dados do socket P2P
-    if ((bytes_recebidos = recv(socket_p2p_atual, buffer_p2p, MAX_MSG_SIZE - 1, 0)) <= 0)
-    {
-        // Tratamento de desconexão
-        if (*handshake_completo_ptr == 0 && bytes_recebidos == 0)
-        {
-            printf("[P2P] Aviso: recv() retornou 0 durante handshake. Mantendo conexão.\n");
-        }
-        else if (bytes_recebidos == 0)
-        {
-            printf("[P2P] Conexão encerrada pelo peer (socket %d)\n", socket_p2p_atual);
-        }
-        else
-        {
-            perror("[P2P] Erro ao receber dados");
-        }
-
-        // Limpeza de recursos
-        close(socket_p2p_atual);
-        FD_CLR(socket_p2p_atual, conjunto_principal_ptr);
-        *socket_p2p_ptr = -1;
-        *handshake_completo_ptr = 0;
-
-        return;
-    }
-
-    // Processamento da mensagem recebida
-    buffer_p2p[bytes_recebidos] = '\0';
-    processar_mensagem_recebida(socket_p2p_atual, buffer_p2p,
-                                handshake_completo_ptr, conjunto_principal_ptr, socket_p2p_ptr,
-                                sensores, contador_sensores_ptr,
-                                pedidos_pendentes);
-}
-
 void processar_mensagem_recebida(int socket_origem, const char *buffer_recebido,
                                  int *handshake_completo_ptr, fd_set *conjunto_principal_ptr,
                                  int *socket_p2p_ptr, SensorInfo *sensores,

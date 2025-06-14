@@ -243,7 +243,43 @@ int main(int argc, char *argv[])
             // Comunicação P2P existente
             else if (socket_p2p != -1 && i == socket_p2p)
             {
-                tratar_comunicacao_p2p(i, &socket_p2p, &handshake_p2p_completo, &conjunto_principal, sensores_conectados, &contador_sensores, pedidos_pendentes);
+                char buffer_p2p[MAX_MSG_SIZE];
+                memset(buffer_p2p, 0, MAX_MSG_SIZE);
+                ssize_t bytes_recebidos;
+
+                if ((bytes_recebidos = recv(i, buffer_p2p, MAX_MSG_SIZE - 1, 0)) <= 0)
+                {
+                    // Tratamento de desconexão
+                    if (handshake_p2p_completo == 0 && bytes_recebidos == 0)
+                    {
+                        printf("[P2P] Aviso: recv() retornou 0 durante handshake. Mantendo conexão.\n");
+                    }
+                    else if (bytes_recebidos == 0)
+                    {
+                        printf("[P2P] Conexão encerrada pelo peer (socket %d)\n", i);
+                    }
+                    else
+                    {
+                        perror("[P2P] Erro ao receber dados");
+                    }
+
+                    // Limpeza de recursos
+                    close(i);
+                    FD_CLR(i, &conjunto_principal);
+                    socket_p2p = -1;
+                    handshake_p2p_completo = 0;
+
+                    // return;
+                }
+                else
+                {
+                    // Processamento da mensagem recebida
+                    buffer_p2p[bytes_recebidos] = '\0';
+                    processar_mensagem_recebida(i, buffer_p2p,
+                                                &handshake_p2p_completo, &conjunto_principal, &socket_p2p,
+                                                sensores_conectados, &contador_sensores,
+                                                pedidos_pendentes);
+                }
             }
             // Comunicação com cliente existente
             else
