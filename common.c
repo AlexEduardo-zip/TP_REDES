@@ -674,52 +674,6 @@ void tratar_resposta_verificar_alerta(const char *localizacao,
     }
 }
 
-void tratar_comunicacao_cliente(int socket_cliente, fd_set *conjunto_principal_ptr,
-                                SensorInfo *sensores, int *contador_sensores_ptr,
-                                int *socket_p2p_ptr,
-                                PendingRequest *pedidos_pendentes)
-{
-    char buffer_recebido[MAX_MSG_SIZE];
-    memset(buffer_recebido, 0, MAX_MSG_SIZE);
-    ssize_t bytes_recebidos;
-
-    // Recebe dados do cliente
-    if ((bytes_recebidos = recv(socket_cliente, buffer_recebido, MAX_MSG_SIZE - 1, 0)) <= 0)
-    {
-        // Trata desconexão do cliente
-        SensorInfo *sensor = buscar_sensor_por_socket(sensores, *contador_sensores_ptr, socket_cliente);
-        if (sensor != NULL)
-        {
-            sensor->is_active = 0;
-            (*contador_sensores_ptr)--;
-            printf("[SERVER] Sensor desconectado: %s\n", sensor->sensor_id_str);
-        }
-
-        close(socket_cliente);
-        FD_CLR(socket_cliente, conjunto_principal_ptr);
-        return;
-    }
-
-    // Processa mensagem recebida
-    buffer_recebido[bytes_recebidos] = '\0';
-
-    int codigo_recebido;
-    char payload1[256], payload2[256];
-    ParseResultType resultado = analisar_mensagem(buffer_recebido, &codigo_recebido, payload1, payload2);
-
-    if (resultado == PARSE_ERROR_INVALID_FORMAT)
-    {
-        fprintf(stderr, "[SERVER] Erro no formato da mensagem do cliente %d\n", socket_cliente);
-        return;
-    }
-
-    // Encaminha para processamento central
-    processar_mensagem_recebida(socket_cliente, buffer_recebido, NULL,
-                                conjunto_principal_ptr, socket_p2p_ptr,
-                                sensores, contador_sensores_ptr,
-                                pedidos_pendentes);
-}
-
 SensorInfo *buscar_sensor_por_id(SensorInfo *sensores, const char *id_sensor)
 {
     for (int i = 0; i < MAX_CLIENTS; i++)
@@ -730,18 +684,6 @@ SensorInfo *buscar_sensor_por_id(SensorInfo *sensores, const char *id_sensor)
         }
     }
 
-    return NULL;
-}
-
-SensorInfo *buscar_sensor_por_socket(SensorInfo *sensores, int quantidade_sensores, int socket_fd)
-{
-    for (int i = 0; i < quantidade_sensores; i++)
-    {
-        if (sensores[i].socket_fd == socket_fd)
-        {
-            return &sensores[i];
-        }
-    }
     return NULL;
 }
 

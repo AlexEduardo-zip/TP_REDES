@@ -284,7 +284,55 @@ int main(int argc, char *argv[])
             // Comunicação com cliente existente
             else
             {
-                tratar_comunicacao_cliente(i, &conjunto_principal, sensores_conectados, &contador_sensores, &socket_p2p, pedidos_pendentes);
+                char buffer_recebido[MAX_MSG_SIZE];
+                memset(buffer_recebido, 0, MAX_MSG_SIZE);
+                ssize_t bytes_recebidos;
+
+                if ((bytes_recebidos = recv(i, buffer_recebido, MAX_MSG_SIZE - 1, 0)) <= 0)
+                {
+                    // Trata desconexão do cliente
+                    SensorInfo *sensor = NULL;
+
+                    for (int i = 0; i < contador_sensores; i++)
+                    {
+                        if (sensores_conectados[i].socket_fd == i)
+                        {
+                            sensor = &sensores_conectados[i];
+                        }
+                    }
+
+                    if (sensor != NULL)
+                    {
+                        sensor->is_active = 0;
+                        contador_sensores--;
+                        printf("[SERVER] Sensor desconectado: %s\n", sensor->sensor_id_str);
+                    }
+
+                    close(i);
+                    FD_CLR(i, &conjunto_principal);
+                }
+                else
+                {
+                    // Processa mensagem recebida
+                    buffer_recebido[bytes_recebidos] = '\0';
+
+                    int codigo_recebido;
+                    char payload1[256], payload2[256];
+                    ParseResultType resultado = analisar_mensagem(buffer_recebido, &codigo_recebido, payload1, payload2);
+
+                    if (resultado == PARSE_ERROR_INVALID_FORMAT)
+                    {
+                        fprintf(stderr, "[SERVER] Erro no formato da mensagem do cliente %d\n", i);
+                    }
+                    else
+                    {
+                        // Encaminha para processamento central
+                        processar_mensagem_recebida(i, buffer_recebido, NULL,
+                                                    &conjunto_principal, &socket_p2p,
+                                                    sensores_conectados, &contador_sensores,
+                                                    pedidos_pendentes);
+                    }
+                }
             }
         }
     }
