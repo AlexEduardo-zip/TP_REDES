@@ -89,7 +89,83 @@ int main(int argc, char *argv[])
                 {
                     if (estado.registrado_sl && estado.registrado_ss)
                     {
-                        processar_entrada_teclado(&estado);
+                        char buffer_comando[MAX_MSG_SIZE];
+
+                        // Lê entrada do usuário
+                        if (fgets(buffer_comando, sizeof(buffer_comando), stdin) == NULL)
+                        {
+                            printf("\n[SENSOR] EOF detectado. Encerrando...\n");
+                            construir_mensagem(estado.buffer_envio, sizeof(estado.buffer_envio),
+                                               REQ_DISCSEN, estado.id_sensor_sl, NULL);
+                            send(estado.socket_sl, estado.buffer_envio, strlen(estado.buffer_envio), 0);
+                            construir_mensagem(estado.buffer_envio, sizeof(estado.buffer_envio),
+                                               REQ_DISCSEN, estado.id_sensor_ss, NULL);
+                            send(estado.socket_ss, estado.buffer_envio, strlen(estado.buffer_envio), 0);
+                            // return;
+                        }
+                        else
+                        {
+                            // Remove newline
+                            buffer_comando[strcspn(buffer_comando, "\n")] = '\0';
+
+                            // Faz cópia para tokenização segura
+                            char copia_temp[MAX_MSG_SIZE];
+                            strncpy(copia_temp, buffer_comando, sizeof(copia_temp));
+                            char *comando = strtok(copia_temp, " ");
+
+                            if (comando)
+                            {
+
+                                if (strcmp(comando, "kill") == 0)
+                                {
+                                    printf("[SENSOR] Encerrando conexões...\n");
+                                    construir_mensagem(estado.buffer_envio, sizeof(estado.buffer_envio),
+                                                       REQ_DISCSEN, estado.id_sensor_sl, NULL);
+                                    send(estado.socket_sl, estado.buffer_envio, strlen(estado.buffer_envio), 0);
+
+                                    construir_mensagem(estado.buffer_envio, sizeof(estado.buffer_envio),
+                                                       REQ_DISCSEN, estado.id_sensor_ss, NULL);
+                                    send(estado.socket_ss, estado.buffer_envio, strlen(estado.buffer_envio), 0);
+                                }
+                                else if (strcmp(comando, "check") == 0)
+                                {
+                                    char *arg = strtok(NULL, "");
+                                    if (arg && strcmp(arg, "failure") == 0)
+                                    {
+                                        printf("[SENSOR] Sending REQ_SENSSTATUS %s\n", estado.id_sensor_ss);
+                                        construir_mensagem(estado.buffer_envio, sizeof(estado.buffer_envio),
+                                                           REQ_SENSSTATUS, estado.id_sensor_ss, NULL);
+                                        send(estado.socket_ss, estado.buffer_envio, strlen(estado.buffer_envio), 0);
+                                    }
+                                }
+                                else if (strcmp(comando, "locate") == 0)
+                                {
+                                    char *id_alvo = strtok(NULL, " ");
+                                    if (id_alvo)
+                                    {
+                                        printf("[SENSOR] Localizando sensor %s...\n", id_alvo);
+                                        construir_mensagem(estado.buffer_envio, sizeof(estado.buffer_envio),
+                                                           REQ_SENSLOC, id_alvo, NULL);
+                                        send(estado.socket_sl, estado.buffer_envio, strlen(estado.buffer_envio), 0);
+                                    }
+                                }
+                                else if (strcmp(comando, "diagnose") == 0)
+                                {
+                                    char *localizacao = strtok(NULL, " ");
+                                    if (localizacao)
+                                    {
+                                        printf("[SENSOR] Diagnosticando localização %s...\n", localizacao);
+                                        construir_mensagem(estado.buffer_envio, sizeof(estado.buffer_envio),
+                                                           REQ_LOCLIST, estado.id_sensor_sl, localizacao);
+                                        send(estado.socket_sl, estado.buffer_envio, strlen(estado.buffer_envio), 0);
+                                    }
+                                }
+                                else
+                                {
+                                    printf("[SENSOR] Comando desconhecido: '%s'\n", comando);
+                                }
+                            }
+                        }
                     }
                     else
                     {
