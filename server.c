@@ -1,0 +1,235 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <sys/select.h>
+#include "common.h"
+#include <stddef.h>
+#include <time.h>
+
+int main(int argc, char *argv[])
+{
+    // Validação dos argumentos de entrada
+    if (argc < 4)
+    {
+        fprintf(stderr, "Uso: %s <ip_peer> <porta_p2p> <porta_escuta_clientes>\n", argv[0]);
+        exit(EXIT_FAILURE);
+    }
+    char *ip_peer_alvo = argv[1];
+    int porta_p2p_comum = atoi(argv[2]);
+    int porta_escuta_clientes = atoi(argv[3]);
+    // Fim da validação dos argumentos
+
+    // Definição do tipo de servidor
+    if (porta_escuta_clientes == 60000)
+    {
+        tipo_servidor = TIPO_SERVIDOR_LOCALIZACAO;
+        printf("[SL] iniciado na porta %d\n", porta_escuta_clientes);
+    }
+    else if (porta_escuta_clientes == 61000)
+    {
+        tipo_servidor = TIPO_SERVIDOR_STATUS;
+        printf("[SS] iniciado na porta %d\n", porta_escuta_clientes);
+    }
+    else
+    {
+        perror("Porta inválida. Use 60000 para SL e 61000 para SS");
+        exit(EXIT_FAILURE);
+    }
+    // Fim da definição do tipo de servidor
+
+    // Configuração inicial dos sensores
+    SensorInfo sensores_conectados[MAX_CLIENTS];
+    PendingRequest pedidos_pendentes[MAX_CLIENTS];
+    int contador_sensores = 0;
+
+    for (int i = 0; i < MAX_CLIENTS; i++)
+    {
+        sensores_conectados[i].is_active = 0;
+        sensores_conectados[i].socket_fd = -1;
+        pedidos_pendentes[i].is_active = 0;
+    }
+    // Fim da configuração dos sensores
+
+    // Configuração P2P
+    // Descritor de socket para a conexão P2P ativa
+    // Valor -1 indica que não há conexão ativa
+    int socket_p2p = -1;
+
+    // Descritor de socket para escuta de conexões P2P
+    // Valor -1 indica que não está escutando conexões
+    int socket_escuta_p2p = -1;
+
+    // Flag que indica se o handshake P2P foi completado
+    int handshake_p2p_completo = 0;
+
+    // Socket principal para escuta de clientes
+    int socket_escuta;
+
+    // Número máximo de conexões pendentes na fila
+    int max_conexoes_pendentes = 10;
+
+    socket_escuta = criar_e_configurar_socket_escuta(porta_escuta_clientes, max_conexoes_pendentes);
+    if (socket_escuta == SOCKET_ERROR)
+    {
+        perror("Falha crítica em criar_e_configurar_socket_escuta");
+        exit(EXIT_FAILURE);
+    }
+
+    // Conjuntos de descritores de arquivo para select()
+    fd_set conjunto_principal, conjunto_leitura;
+
+    // Maior descritor de arquivo no conjunto
+    int fd_maximo;
+
+    FD_ZERO(&conjunto_principal);
+    FD_ZERO(&conjunto_leitura);
+
+    FD_SET(socket_escuta, &conjunto_principal);
+    FD_SET(STDIN_FILENO, &conjunto_principal);
+
+    fd_maximo = socket_escuta;
+
+    inicializar_link_p2p(ip_peer_alvo, porta_p2p_comum,
+                         &socket_p2p, &socket_escuta_p2p,
+                         &conjunto_principal, &fd_maximo);
+
+    // Loop principal do servidor
+    while (1)
+    {
+        // Reestabelece conexão P2P se necessário
+        if (socket_p2p == -1 && socket_escuta_p2p == -1)
+        {
+            inicializar_link_p2p(ip_peer_alvo, porta_p2p_comum,
+                                 &socket_p2p, &socket_escuta_p2p,
+                                 &conjunto_principal, &fd_maximo);
+        }
+
+        conjunto_leitura = conjunto_principal;
+
+        // Espera por atividade em algum socket
+        if (select(fd_maximo + 1, &conjunto_leitura, NULL, NULL, NULL) == SOCKET_ERROR)
+        {
+            perror("Erro crítico no select");
+            exit(EXIT_FAILURE);
+        }
+
+        // Verifica todos os sockets por atividade
+        for (int i = 0; i <= fd_maximo; i++)
+        {
+            if (!FD_ISSET(i, &conjunto_leitura))
+                continue;
+
+            // Tratamento de entrada do usuário via terminal
+            if (i == STDIN_FILENO)
+            {
+                char buffer_comando[MAX_MSG_SIZE];
+                if (fgets(buffer_comando, sizeof(buffer_comando), stdin) == NULL)
+                    continue;
+
+                // Remove nova linha
+                buffer_comando[strcspn(buffer_comando, "\n")] = 0;
+
+                if (strcmp(buffer_comando, "kill") == 0)
+                {
+                    if (socket_p2p != -1)
+                    {
+                        printf("[SERVER] Encerrando conexão P2P...\n");
+                        char buffer_envio[MAX_MSG_SIZE];
+
+                        construir_mensagem(buffer_envio, MAX_MSG_SIZE, REQ_DISCPEER, NULL, NULL);
+
+                        send(socket_p2p, buffer_envio, strlen(buffer_envio), 0);
+                    }
+                    exit(0);
+                }
+                else
+                {
+                    printf("[SERVER] Comando não reconhecido: \"%s\"\n", buffer_comando);
+                }
+                continue;
+            }
+
+            // Nova conexão de cliente
+            if (i == socket_escuta)
+            {
+                struct sockaddr_in endereco_cliente;
+                socklen_t tamanho_endereco = sizeof(endereco_cliente);
+                int socket_cliente;
+
+                // Aceita nova conexão
+                if ((socket_cliente = accept(socket_escuta, (struct sockaddr *)&endereco_cliente, &tamanho_endereco)) == SOCKET_ERROR)
+                {
+                    perror("[SERVER] Erro ao aceitar novo cliente");
+                }
+                else
+                {
+                    // Adiciona o novo socket ao conjunto principal
+                    FD_SET(socket_cliente, &conjunto_principal);
+                    if (socket_cliente > fd_maximo)
+                    {
+                        fd_maximo = socket_cliente;
+                    }
+
+                    // Log de informações do cliente
+                    char ip_cliente[INET_ADDRSTRLEN];
+                    inet_ntop(AF_INET, &endereco_cliente.sin_addr, ip_cliente, sizeof(ip_cliente));
+                    printf("[SERVER] Novo sensor conectado - IP: %s, Socket: %d\n", ip_cliente, socket_cliente);
+
+                    // Configurações adicionais recomendadas
+                    int opcao = 1;
+                    if (setsockopt(socket_cliente, SOL_SOCKET, SO_KEEPALIVE, &opcao, sizeof(opcao)) == SOCKET_ERROR)
+                    {
+                        perror("[SERVER] Erro ao configurar SO_KEEPALIVE");
+                    }
+                }
+
+                // tratar_nova_conexao_cliente(socket_escuta, &conjunto_principal, &fd_maximo);
+
+                // void tratar_nova_conexao_cliente(int socket_escuta, fd_set *conjunto_principal_ptr, int *fd_maximo_ptr)
+                // {
+
+                //     // // Adiciona o novo socket ao conjunto principal
+                //     // FD_SET(socket_cliente, conjunto_principal_ptr);
+                //     // if (socket_cliente > *fd_maximo_ptr)
+                //     // {
+                //     //     *fd_maximo_ptr = socket_cliente;
+                //     // }
+
+                //     // // Log de informações do cliente
+                //     // char ip_cliente[INET_ADDRSTRLEN];
+                //     // inet_ntop(AF_INET, &endereco_cliente.sin_addr, ip_cliente, sizeof(ip_cliente));
+                //     // printf("[SERVER] Novo sensor conectado - IP: %s, Socket: %d\n", ip_cliente, socket_cliente);
+
+                //     // // Configurações adicionais recomendadas
+                //     // int opcao = 1;
+                //     // if (setsockopt(socket_cliente, SOL_SOCKET, SO_KEEPALIVE, &opcao, sizeof(opcao)) == SOCKET_ERROR)
+                //     // {
+                //     //     perror("[SERVER] Erro ao configurar SO_KEEPALIVE");
+                //     // }
+                // }
+            }
+            // Nova conexão P2P
+            else if (socket_escuta_p2p != -1 && i == socket_escuta_p2p)
+            {
+                tratar_conexao_p2p_entrante(i, &socket_p2p, &socket_escuta_p2p, &conjunto_principal, &fd_maximo);
+            }
+            // Comunicação P2P existente
+            else if (socket_p2p != -1 && i == socket_p2p)
+            {
+                tratar_comunicacao_p2p(i, &socket_p2p, &handshake_p2p_completo, &conjunto_principal, sensores_conectados, &contador_sensores, pedidos_pendentes);
+            }
+            // Comunicação com cliente existente
+            else
+            {
+                tratar_comunicacao_cliente(i, &conjunto_principal, sensores_conectados, &contador_sensores, &socket_p2p, pedidos_pendentes);
+            }
+        }
+    }
+
+    return 0;
+}
