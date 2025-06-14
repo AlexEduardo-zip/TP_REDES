@@ -187,36 +187,58 @@ int main(int argc, char *argv[])
                         perror("[SERVER] Erro ao configurar SO_KEEPALIVE");
                     }
                 }
-
-                // tratar_nova_conexao_cliente(socket_escuta, &conjunto_principal, &fd_maximo);
-
-                // void tratar_nova_conexao_cliente(int socket_escuta, fd_set *conjunto_principal_ptr, int *fd_maximo_ptr)
-                // {
-
-                //     // // Adiciona o novo socket ao conjunto principal
-                //     // FD_SET(socket_cliente, conjunto_principal_ptr);
-                //     // if (socket_cliente > *fd_maximo_ptr)
-                //     // {
-                //     //     *fd_maximo_ptr = socket_cliente;
-                //     // }
-
-                //     // // Log de informações do cliente
-                //     // char ip_cliente[INET_ADDRSTRLEN];
-                //     // inet_ntop(AF_INET, &endereco_cliente.sin_addr, ip_cliente, sizeof(ip_cliente));
-                //     // printf("[SERVER] Novo sensor conectado - IP: %s, Socket: %d\n", ip_cliente, socket_cliente);
-
-                //     // // Configurações adicionais recomendadas
-                //     // int opcao = 1;
-                //     // if (setsockopt(socket_cliente, SOL_SOCKET, SO_KEEPALIVE, &opcao, sizeof(opcao)) == SOCKET_ERROR)
-                //     // {
-                //     //     perror("[SERVER] Erro ao configurar SO_KEEPALIVE");
-                //     // }
-                // }
             }
             // Nova conexão P2P
             else if (socket_escuta_p2p != -1 && i == socket_escuta_p2p)
             {
-                tratar_conexao_p2p_entrante(i, &socket_p2p, &socket_escuta_p2p, &conjunto_principal, &fd_maximo);
+                struct sockaddr_in endereco_peer;
+                socklen_t tamanho_endereco = sizeof(endereco_peer);
+                int socket_p2p_aceito;
+
+                // Aceita a nova conexão P2P
+                if ((socket_p2p_aceito = accept(i, (struct sockaddr *)&endereco_peer, &tamanho_endereco)) == SOCKET_ERROR)
+                {
+                    perror("[SERVER] Erro ao aceitar conexão P2P");
+                    // return;
+                }
+                else
+                {
+                    // Obtém informações do peer para logging
+                    char ip_peer[INET_ADDRSTRLEN];
+                    inet_ntop(AF_INET, &endereco_peer.sin_addr, ip_peer, sizeof(ip_peer));
+                    printf("[SERVER] Tentativa de conexão P2P de %s\n", ip_peer);
+
+                    // Verifica se já existe uma conexão P2P ativa
+                    if (socket_p2p != -1)
+                    {
+                        printf("[SERVER] Conexão P2P recusada - já existe uma conexão ativa\n");
+
+                        char buffer_envio[MAX_MSG_SIZE];
+                        construir_mensagem(buffer_envio, sizeof(buffer_envio), MSG_ERROR, "1", "Limite de peers excedido");
+                        send(socket_p2p_aceito, buffer_envio, strlen(buffer_envio), 0);
+                        close(socket_p2p_aceito);
+                        // return;
+                    }
+                    else
+                    {
+                        // Configura a nova conexão P2P
+                        socket_p2p = socket_p2p_aceito;
+                        FD_SET(socket_p2p, &conjunto_principal);
+
+                        // Atualiza o maior descritor se necessário
+                        if (socket_p2p > fd_maximo)
+                        {
+                            fd_maximo = socket_p2p;
+                        }
+
+                        // Encerra o socket de escuta P2P
+                        FD_CLR(socket_escuta_p2p, &conjunto_principal);
+                        close(socket_escuta_p2p);
+                        socket_escuta_p2p = -1;
+
+                        printf("[SERVER] Conexão P2P estabelecida com %s (socket %d)\n", ip_peer, socket_p2p);
+                    }
+                }
             }
             // Comunicação P2P existente
             else if (socket_p2p != -1 && i == socket_p2p)
